@@ -1,1 +1,2 @@
-# friendly-carnival
+# An Analysis of the Baseball Pitch 
+I conducted my own research into the data behind predicting a professional baseball players pitch. I scraped data from multiple sources like Kaggle.com and baseballsavant.com. My analysis involved utilizing the lasso shrinkage method on my generalized linear model that I was using, and subsequently made use of 2 Monte-Carlo simulations with 2 different sampling methods. This allowed me to measure the performance of my GLM model I constructed.
