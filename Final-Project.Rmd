@@ -1,0 +1,395 @@
+---
+title: "Final Project"
+author: "Nakoul Makim (namakim)"
+date: "3/22/2020"
+output: html_document
+---
+
+## R Program's external requirements
+```{r}
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(standardize)
+library(nnet)
+library(glmnet)
+library(arm)
+library(multcomp)
+```
+
+## Data Cleaning
+```{r}
+#at-bat data
+at_bats <- read_csv("atbats.csv")
+#at_bats
+
+#pitch data
+pitches <- read_csv("pitches.csv")
+#pitches
+
+#player name data
+player_names <- read_csv("player_names.csv")
+
+#combine first and last name of players
+player_names$player_name <- paste(player_names$first_name, player_names$last_name)
+players <- subset(player_names, select = c("id","player_name"))
+#players
+```
+
+```{r}
+#trimmed datasets
+at_bats_trimmed <- subset(at_bats, select = c("ab_id", "batter_id", "pitcher_id", "inning", "o", "p_score", "p_throws", "stand"))
+#at_bats_trimmed
+
+pitches_trimmed <- subset(pitches, select = c("ab_id","end_speed", "px", "pz", "pitch_type","b_count","s_count","outs","pitch_num","on_1b","on_2b","on_3b"))
+#pitches_trimmed
+```
+
+```{r}
+# match the column names of the 2 tables in order to join
+names(at_bats_trimmed) [names(at_bats_trimmed) == "batter_id"] <- "id"
+names(at_bats_trimmed) [names(at_bats_trimmed) == "pitcher_id"] <- "id_p"
+
+# joining batter and player name data
+combined <- full_join(at_bats_trimmed, players, "id")
+
+# joining pitcher and player name data
+names(players)[names(players) == "id"] <- "id_p"
+combined_player_data <- full_join(combined, players, "id_p")
+#combined_player_data
+```
+
+```{r}
+# Trimming the data more, removed batter name, player ID's, score data
+clean_data <- subset(combined_player_data, select = c("ab_id","player_name.y","inning","o","p_throws","stand"))
+
+# combined pitch data with batter data
+combined_bat_pitch <- full_join(clean_data, pitches_trimmed, "ab_id")
+#combined_bat_pitch
+```
+
+```{r}
+# added year column
+combined_bat_pitch$year <- strtrim(combined_bat_pitch$ab_id, 4)
+
+# removed data from 2015 and 2016 years due to large amounts of missing data in those years
+final_data <- subset(combined_bat_pitch, year %in% c("2017","2018"))
+names(final_data)[names(final_data) == "player_name.y"] = "pitcher_name"
+#final_data
+```
+
+```{r}
+# read in additional pitching stats for each pitcher from 2017-2019
+pitcher_stats <- read_csv("stats.csv")
+
+# combine first and last name of pitchers
+pitcher_stats$pitcher_name <- paste(pitcher_stats$first_name, pitcher_stats$last_name)
+
+# make pitch-type column names more readable and easier to understand
+names(pitcher_stats) [names(pitcher_stats) == "n_ff_formatted"] <- "4-seam %"
+names(pitcher_stats) [names(pitcher_stats) == "n_sl_formatted"] <- "slider %"
+names(pitcher_stats) [names(pitcher_stats) == "n_ch_formatted"] <- "change-up %"
+names(pitcher_stats) [names(pitcher_stats) == "n_cukc_formatted"] <- "curve ball %"
+names(pitcher_stats) [names(pitcher_stats) == "n_sift_formatted"] <- "sinker %"
+names(pitcher_stats) [names(pitcher_stats) == "n_fc_formatted"] <- "cutter %"
+names(pitcher_stats) [names(pitcher_stats) == "n_fs_formatted"] <- "splitter %"
+names(pitcher_stats) [names(pitcher_stats) == "n_fastball_formatted"] <- "fastball %"
+names(pitcher_stats) [names(pitcher_stats) == "n_breaking_formatted"] <- "breaking %"
+names(pitcher_stats) [names(pitcher_stats) == "n_offspeed_formatted"] <- "offspeed %"
+
+# when a pitcher cannot throw certain type of pitch, replace NA with 0
+pitcher_stats[is.na(pitcher_stats)] = 0
+
+# Trim the additional pitch stats 
+pitcher_stats_trimmed <- subset(pitcher_stats, select = c("pitcher_name","year","p_ball","p_called_strike","exit_velocity_avg","4-seam %","slider %","change-up %","curve ball %","sinker %","cutter %","splitter %","fastball %","breaking %","offspeed %","pitch_count"))
+#pitcher_stats_trimmed
+```
+
+```{r}
+# seperate dataset by year: 2017, 2018, 2019
+pitcher_2017 <- subset(pitcher_stats_trimmed, year %in% "2017")
+pitcher_2018 <- subset(pitcher_stats_trimmed, year %in% "2018")
+pitcher_2019 <- subset(pitcher_stats_trimmed, year %in% "2019")
+
+pitch_2017 <- subset(final_data, year %in% "2017")
+pitch_2018 <- subset(final_data, year %in% "2018")
+pitch_2019 <- subset(final_data, year %in% "2019")
+
+
+combined_2017 <- full_join(pitch_2017, pitcher_2017, "pitcher_name")
+combined_2018 <- full_join(pitch_2018, pitcher_2018, "pitcher_name")
+combined_2017$ab_id <- substr(combined_2017$ab_id, 5, 10)
+combined_2018$ab_id <- substr(combined_2018$ab_id, 5, 10)
+#combined_2017
+#combined_2018
+```
+
+```{r}
+baseball_temp <- rbind(combined_2017, combined_2018)
+baseball <- subset(baseball_temp, select =-c(year.y))
+baseball$event <- NULL
+baseball$pitch_count <- NULL
+baseball$year.y <- NULL
+baseball$p_ball <- NULL
+baseball$p_called_strike <- NULL
+baseball$on_base <- baseball$on_1b + baseball$on_2b + baseball$on_3b
+baseball$on_1b <- NULL
+baseball$on_2b <- NULL
+baseball$on_3b <- NULL
+baseball$p_throws <- NULL
+baseball$stand <- NULL
+baseball$spin_rate <- NULL
+baseball$spin_dir <- NULL
+baseball$type_confidence <- NULL
+baseball$nasty <- NULL
+baseball$code <- NULL
+baseball$type <- NULL
+baseball$exit_velocity_avg <- NULL
+options(digits = 10)
+names(baseball)[names(baseball) == "year.x"] = "Year"
+baseball$pitch_type <- factor(baseball$pitch_type)
+#names(baseball)[names(baseball) == "end_speed"] = "prev_pitch_speed"
+#names(baseball)[names(baseball) == "px"] = "prev_x_loc"
+#names(baseball)[names(baseball) == "pz"] = "prev_z_loc"
+baseball$px <- round(baseball$px, 3)
+baseball$pz <- round(baseball$pz, 3)
+#baseball
+baseball_2018 <- subset(baseball, baseball$Year == "2018")
+#baseball_2018[complete.cases(baseball_2018),]
+```
+
+```{r}
+baseball <- mutate(baseball, prev_pitch_speed = lag(end_speed))
+baseball <- mutate(baseball, prev_x_loc = lag(px))
+baseball <- mutate(baseball, prev_z_loc = lag(pz))
+baseball_no_na <- na.omit(baseball)
+#baseball
+baseball_no_na <- baseball_no_na[!(baseball_no_na$pitch_type %in% c("EP","FO","IN","PO","SC","UN","AB")),]
+baseball_no_na %>% mutate_if(is.factor, as.character) -> baseball_no_na
+baseball_no_na$pitch_type[baseball_no_na$pitch_type %in% c("FF","FT")] <- "Fastball"
+baseball_no_na$pitch_type[baseball_no_na$pitch_type %in% c("FC","SI")] <- "Modified Fastball"
+baseball_no_na$pitch_type[baseball_no_na$pitch_type %in% c("SL","CU","KC","KN")] <- "Curveball"
+baseball_no_na$pitch_type[baseball_no_na$pitch_type %in% c("CH","FS")] <- "Offspeed"
+baseball_no_na$pitch_type <- factor(baseball_no_na$pitch_type)
+#baseball_no_na
+```
+
+```{r}
+mlb_temp <- subset(baseball_no_na, baseball_no_na$inning %in% c(1, 2, 3, 4, 5, 6, 7, 8, 9))
+mlb_temp$count <- paste0(mlb_temp$b_count, mlb_temp$s_count)
+mlb_temp$count <- as.numeric(mlb_temp$count)
+mlb_temp$count <- as.factor(mlb_temp$count)
+mlb_temp$inning <- as.factor(mlb_temp$inning)
+mlb_temp$o <- as.factor(mlb_temp$o)
+#mlb_temp
+```
+```{r}
+mlb <- subset(mlb_temp, pitcher_name %in% c("Max Scherzer","Aaron Nola","Jacob deGrom","Corey Kluber","Patrick Corbin","Jake Arrieta","Justin Verlander","Trevor Bauer","Zack Greinke","Carlos Carrasco"))
+#mlb
+mlb_2017 <- subset(mlb, Year == "2017")
+mlb_2017$pitcher_name <- as.factor(mlb_2017$pitcher_name)
+#mlb_2017
+mlb_2018 <- subset(mlb, Year == "2018")
+mlb_2018$pitcher_name <- as.factor(mlb_2018$pitcher_name)
+#mlb_2018
+```
+
+## Data Exploration
+```{r}
+ggplot(mlb, aes(x = pitch_type)) + geom_bar(fill = "steelblue") + geom_text(aes(label = stat(count)), stat = 'count', vjust = 1.6, color = "white", size = 3.5) + theme_minimal() + labs(y = "Frequency", x = "Pitch Type", title = "Number of Types of Pitches in Dataset")
+```
+
+
+```{r}
+fastball <- subset(mlb, mlb$pitch_type == "Fastball")
+curveball <- subset(mlb, mlb$pitch_type == "Curveball")
+modified_fast <- subset(mlb, mlb$pitch_type == "Modified Fastball")
+offspeed <- subset(mlb, mlb$pitch_type == "Offspeed")
+```
+
+## Methodology & Models:
+
+```{r}
+mlb_glm <- rbind(fastball, curveball)
+mlb_glm$pitch_type <- droplevels(mlb_glm$pitch_type)
+train_temp <- subset(mlb_glm, Year == "2017")
+test_temp <- subset(mlb_glm, Year == "2018")
+x <- which(colnames(train_temp) %in% c("4-seam %", "slider %", "change-up %", "curve ball %", "sinker %", "cutter %", "splitter %", "fastball %", "breaking %", "offspeed %"))
+train <- train_temp[,-x]
+y <- which(colnames(test_temp) %in% c("4-seam %", "slider %", "change-up %", "curve ball %", "sinker %", "cutter %", "splitter %", "fastball %", "breaking %", "offspeed %"))
+test <- test_temp[,-y]
+ggplot(mlb_glm, aes(x = pitch_type)) + geom_bar(fill = "steelblue") + geom_text(aes(label = stat(count)), stat = 'count', vjust = 1.6, color = "white", size = 3.5) + theme_minimal() + labs(x = "Pitch Type", y = "count", title = "Number of Fastballs and Curveball")
+ggplot(mlb_glm, aes(x = pitch_type, y = prev_pitch_speed)) + geom_boxplot() + coord_flip() + stat_summary() + labs(x = "Previous Pitch Speed", y = "Pitch Type", title = "Boxplot of Previous Pitch Speeds of a Pitch Type")
+ggplot(mlb_glm, aes(x = pitch_type, y = prev_x_loc)) + geom_boxplot() + labs(x = "Pitch Type", y = "Previous Horizaonal Location", title = "Boxplot of Previous pitch location of a Pitch Type")
+ggplot(mlb_glm, aes(prev_pitch_speed, y = prev_x_loc, color = pitch_type)) + geom_point() + labs(x = "Previous pitch speed", y = "Previous x location", title = "Scatterplot of pitch speed vs pitch location")
+ggplot(mlb_glm, aes(count, fill = pitch_type)) + geom_bar() + labs(x = "Batter Count", y = "Frequency", title = "The Type of Pitch thrown for each Batter Count")
+```
+
+### More Data Exploration of trimmed dataset
+```{r}
+with(mlb_glm, table(count, pitch_type))
+```
+
+### Binary Logistic Regression Model
+```{r}
+#Binary Logistic Regression
+glm_test2 <- glm(pitch_type ~ log(prev_pitch_speed) + prev_x_loc + prev_z_loc + count + o + inning, family = "binomial", data = mlb_glm)
+summary(glm_test2)
+```
+
+### Lasso Regression (Dimension Reduction)
+```{r}
+X4 <- model.matrix(glm_test2)[,-1]
+y4 <- mlb_glm$pitch_type
+lasso_mod4 <- glmnet(x = X4, y = y4, standardize = TRUE, family = "binomial")
+plot(lasso_mod4, xvar = "dev", label = TRUE)
+```
+
+```{r}
+lasso_cv4 <- cv.glmnet(x = X4, y = y4, family = "binomial", type.measure = "class")
+plot(lasso_cv4)
+best_lambda4 <- lasso_cv4$lambda.min
+best_lambda4
+lasso_best4 <- glmnet(x = X4, y = y4, family = "binomial", lambda = best_lambda4)
+```
+
+```{r}
+pred4 <- predict(lasso_best4, s = best_lambda4, newx = X4, type = "class")
+final_pred4 <- cbind(levels(y4)[y4], pred4)
+head(final_pred4, 30)
+coef(lasso_best4)
+```
+
+```{r}
+df4 <- data.frame(levels(y4)[y4], pred4)
+names(df4) <- c("Actual", "Predicted")
+#df4
+df_truth4 <- subset(df4, df4$Actual == df4$Predicted)
+#df_truth4
+
+Lasso_prediction_error <- 1 - (nrow(df_truth4)/ nrow(df4))
+Lasso_prediction_error
+```
+
+### Fitting the Reduced-GLM and Prediction
+```{r}
+train$pitcher_name <- as.factor(train$pitcher_name)
+test$pitcher_name <- as.factor(test$pitcher_name)
+
+# New GLM Model with Updated Predictors
+glm_model <- glm(pitch_type ~ prev_x_loc + log10(prev_pitch_speed) + count + factor(o, exclude = c("1")) + inning, family = "binomial", data = train)
+#summary(glm_model)
+pred <- predict(glm_model, test, type = "response")
+pred <- na.omit(round(pred))
+pred1 <- mean(pred)
+
+# subtract 1 because in test data, curveball level = 1 and fastball = 2 so it is on 1-2 scale, not 0-1 scale like our prediction model. 
+actual <- mean(as.numeric(test$pitch_type)) - 1
+bias_pred <- pred1 - actual
+pred_df <- data.frame("Mean", pred1, actual)
+names(pred_df) <- c("","Prediction", "Actual")
+bias_df <- data.frame("Bias", abs(bias_pred), "NA")
+names(bias_df) <- c("", "Prediction", "Actual")
+pred_act_df <- rbind(pred_df, bias_df)
+knitr::kable(pred_act_df)
+```
+
+### Monte Carlo Simulation #1
+```{r}
+set.seed(3343229)
+runs <- 23454
+mc_func <- function() {
+    # 0 = curveball, 1 = fastball
+    z <- sample(c(0,1),46786, prob = c(0.44, 0.56), replace = TRUE)
+    return(mean(z))
+}
+mc.sim <- replicate(runs, mc_func())
+```
+
+### Mean, Bias, Variance, and MSE of Simulation 1
+```{r}
+mean(mc.sim)
+var(mc.sim)
+test_df <- as.data.frame(mc.sim)
+test_df2 <- mutate(
+    test_df,
+    test_df$pitch_type <- ifelse(test_df$mc.sim < 0.56, "Curveball", "Fastball")
+)
+names(test_df2) <- c("MC.Sim Value", "Pitch Type")
+#test_df2
+theta <- mean(as.numeric(test$pitch_type))
+theta_hat <- mean(as.numeric(as.factor(test_df2$`Pitch Type`)))
+bias <- theta_hat - theta
+bias
+MSE <- var(mc.sim) + bias^2
+MSE
+```
+
+
+### Monte Carlo Simulation #2
+```{r}
+set.seed(3343229)
+mean_prev_xloc <- mean(mlb_glm$prev_x_loc)
+sd_xloc <- sqrt(var(mlb_glm$prev_x_loc))
+
+mean_pitch_speed <- mean(mlb_glm$prev_pitch_speed)
+sd_pitch_speed <- sqrt(var(mlb_glm$prev_pitch_speed))
+
+runs <- 23454
+mc_func2 <- function(){
+    # count variables where 0 = "0",....,3 = "10",....12 = "32" 
+    count <- sample(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 23454, replace = TRUE)
+    # innings
+    innings <- sample(c(1, 2, 3, 4, 5, 6, 7, 8, 9), 23454, replace = TRUE)
+    
+    outs <- sample(c(0, 1, 2, 3), 23454, replace = TRUE)
+    
+    x_loc <- rnorm(23454, mean = mean_prev_xloc, sd = sd_xloc)
+    
+    prev_speed <- rnorm(23454, mean = mean_pitch_speed, sd = sd_pitch_speed)
+    
+    pitch_class <- 0.229996*count + -0.139265*outs + -0.446322*innings + -0.033818*x_loc + -0.042988339*prev_speed
+    
+    if (mean(pitch_class) <= -4.44335) {
+        pitch_class <- 0
+    }
+    else {
+        pitch_class <- 1
+    }
+    return(mean(pitch_class))
+}
+
+mc.sim2 <- replicate(runs, mc_func2())
+```
+
+### Mean, Variance, Bias, MSE of Simulation 2
+```{r}
+mean(mc.sim2)
+var(mc.sim2)
+test_df3 <- as.data.frame(mc.sim2)
+#test_df3
+test_df4 <- mutate(
+    test_df3,
+    test_df3$pitch_type <- ifelse(test_df3$mc.sim2 == 0, "Curveball", "Fastball")
+)
+names(test_df4) <- c("MC.Sim Value", "Pitch Type")
+#test_df2
+theta <- mean(as.numeric(test$pitch_type))
+theta_hat2 <- mean(as.numeric(as.factor(test_df4$`Pitch Type`)))
+bias2 <- theta_hat2 - theta
+bias2
+MSE2 <- var(mc.sim2) + bias2^2
+MSE2
+```
+
+### Simulation Results
+```{r}
+MC_df <- data.frame("Simulation 1", mean(mc.sim), var(mc.sim), abs(bias), MSE)
+names(MC_df) <- c("", "Mean of Simulation","Variance of Simulation", "Bias of Simulation", "Mean Squared Error")
+MC_df2 <- data.frame("Simulation 2", mean(mc.sim2), var(mc.sim2), abs(bias2), MSE2)
+names(MC_df2) <- c("","Mean of Simulation","Variance of Simulation", "Bias of Simulation", "Mean Squared Error")
+MC <- rbind(MC_df, MC_df2)
+knitr::kable(MC, main = "Table of Mean and Variance of Monte-Carlo Simulations")
+```
+
